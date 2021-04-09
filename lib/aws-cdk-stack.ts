@@ -1,47 +1,76 @@
-import * as api from '@aws-cdk/aws-apigateway';
-import * as sqs from '@aws-cdk/aws-sqs';
-import * as cdk from '@aws-cdk/core';
-import * as  eventSource from '@aws-cdk/aws-lambda-event-sources';
-import * as dynamodb from '@aws-cdk/aws-dynamodb';
-import * as s3 from '@aws-cdk/aws-s3';
+import { RestApi, LambdaIntegration } from '@aws-cdk/aws-apigateway';
+import { Queue } from '@aws-cdk/aws-sqs';
+import { App, StackProps, Stack } from '@aws-cdk/core';
+import { S3EventSource} from '@aws-cdk/aws-lambda-event-sources';
+import { Table, AttributeType } from '@aws-cdk/aws-dynamodb';
+import { Bucket, EventType } from '@aws-cdk/aws-s3';
 import { createLambda } from '../utils/lambda';
 import { SqsEventSource } from '@aws-cdk/aws-lambda-event-sources';
 
-const S3EventSource = eventSource.S3EventSource;
 const apiDynamodbServiceHandlers = 'src/api-dynamodb-service/handlers';
 
-export class AwsCdkStack extends cdk.Stack {
-  constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
+export class AwsCdkStack extends Stack {
+  constructor(scope: App, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const table = new dynamodb.Table(this, 'Cocktails', {
-      partitionKey: { name: 'name', type: dynamodb.AttributeType.STRING },
+    const table = new Table(this, 'Cocktails', {
+      partitionKey: { name: 'name', type: AttributeType.STRING },
     });
-    const queue = new sqs.Queue(this, 'cocktailsQueue');
-    const bucket = new s3.Bucket(this, 'rgederin-aws-cdk-bucket');
+    const queue = new Queue(this, 'cocktailsQueue');
+    const bucket = new Bucket(this, 'domchevska-aws-cdk-bucket');
 
-    const getAllCocktailLambda = createLambda(this, 'getAllCocktails', 'getAllCocktails.getAllCocktails', apiDynamodbServiceHandlers, table);
-    const getCocktailByNameLambda = createLambda(this, 'getCocktailByName', 'getCocktailByName.getCocktailByName', apiDynamodbServiceHandlers, table);
-    const saveCocktailLambda = createLambda(this, 'saveCocktail', 'saveCocktail.saveCocktail', apiDynamodbServiceHandlers, table);
+    const getAllCocktailLambda = createLambda({
+      scope: this,
+      id: 'getAllCocktails',
+      handler: 'getAllCocktails.getAllCocktails',
+      src: apiDynamodbServiceHandlers,
+      table,
+    });
+    const getCocktailByNameLambda = createLambda({
+      scope: this,
+      id: 'getCocktailByName',
+      handler: 'getCocktailByName.getCocktailByName',
+      src: apiDynamodbServiceHandlers,
+      table,
+    });
+    const saveCocktailLambda = createLambda({
+      scope: this,
+      id: 'saveCocktail',
+      handler: 'saveCocktail.saveCocktail',
+      src: apiDynamodbServiceHandlers,
+      table,
+    });
 
-    const processS3Lambda = createLambda(this, 'processS3Bucket', 'processS3Bucket.processSqsMessage', 'src/s3-sqs-service/handlers', undefined, queue);
-    const processSQSMessageLambda = createLambda(this, 'processSQSMessage', 'processSQSMessage.processSqsMessage', 'src/sqs-dynamodb-service/handlers', undefined, queue);
+    const processS3Lambda = createLambda({
+      scope: this,
+      id: 'processS3Bucket',
+      handler: 'processS3Bucket.processSqsMessage',
+      src: 'src/s3-sqs-service/handlers',
+      queue,
+    });
+    const processSQSMessageLambda = createLambda({
+      scope: this,
+      id: 'processSQSMessage',
+      handler: 'processSQSMessage.processSqsMessage',
+      src: 'src/sqs-dynamodb-service/handlers',
+      queue,
+    });
 
-    const restApi = new api.RestApi(this, 'cocktails-api');
+    const restApi = new RestApi(this, 'cocktails-api');
 
     const cocktails = restApi.root.addResource('cocktails');
     const cocktail = cocktails.addResource('{name}');
 
-    const getAllCocktailsLambdaIntegration = new api.LambdaIntegration(getAllCocktailLambda);
-    const saveCocktailLambdaIntegration = new api.LambdaIntegration(saveCocktailLambda);
-    const getCocktailByNameLambdaIntegration = new api.LambdaIntegration(getCocktailByNameLambda);
+    const getAllCocktailsLambdaIntegration = new LambdaIntegration(getAllCocktailLambda);
+    const saveCocktailLambdaIntegration = new LambdaIntegration(saveCocktailLambda);
+    const getCocktailByNameLambdaIntegration = new LambdaIntegration(getCocktailByNameLambda);
 
     cocktails.addMethod('GET', getAllCocktailsLambdaIntegration);
     cocktails.addMethod('POST', saveCocktailLambdaIntegration);
     cocktail.addMethod('GET', getCocktailByNameLambdaIntegration);
 
     processS3Lambda.addEventSource(new S3EventSource(bucket, {
-      events: [s3.EventType.OBJECT_CREATED]
+      events: [EventType.OBJECT_CREATED]
     }));
 
     processSQSMessageLambda.addEventSource(new SqsEventSource(queue));
